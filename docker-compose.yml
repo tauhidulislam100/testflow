@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14-alpine
+    restart: always
+    env_file:
+      - ./server/.env
+    
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - 5432:5432 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: always
+    env_file:
+      - ./server/.env
+    ports:
+      - 8080:8080
+    volumes:
+      - ./server/src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "npm run db:migrate && npm run dev"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    env_file:
+      - ./web/.env
+    restart: always
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web/src:/app/src
+      
+volumes:
+  postgres_data:
