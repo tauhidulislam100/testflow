@@ -1,46 +1,71 @@
 const bcrypt = require("bcryptjs");
-const db = require("../db.js");
-const authService = require("./auth.service.js");
+const prisma = require("../lib/prisma.js"); // Using CommonJS require
+const authService = require("./auth.service.js"); // Using CommonJS require
 
 const signup = async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
+  if (!email || !password) {
     return res.status(400).send("Email and password required");
+  }
 
-  const existingUser = await db("users").where({ email }).first();
-  if (existingUser) return res.status(400).send("Email already in use");
+  try {
+    // 1. Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const user = await db("users")
-    .insert({
-      email,
-      password_hash: hashedPassword,
-    })
-    .returning("id");
+    if (existingUser) {
+      return res.status(400).send("Email already in use");
+    }
 
-  const { accessToken, refreshToken, refreshTokenJti } =
-    authService.generateTokens({ id: user[0].id, email });
-  await authService.saveRefreshToken(refreshTokenJti, user[0].id);
+    // 2. Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  res.cookie("accessToken", accessToken, authService.accessCookieOptions);
-  res.cookie("refreshToken", refreshToken, authService.refreshCookieOptions);
+    // 3. Create the new user
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password_hash: hashedPassword,
+      },
+    });
 
-  return res.status(201).json({
-    user: { id: user[0], email },
-    accessToken,
-  });
+    // 4. Generate tokens and save the refresh token
+    const { accessToken, refreshToken, refreshTokenJti } =
+      authService.generateTokens(user);
+    await authService.saveRefreshToken(refreshTokenJti, user.id);
+
+    // 5. Set cookies
+    res.cookie("accessToken", accessToken, authService.accessCookieOptions);
+    res.cookie("refreshToken", refreshToken, authService.refreshCookieOptions);
+
+    // 6. Send the response
+    return res.status(201).json({
+      user: { id: user.id, email: user.email },
+      accessToken,
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    return res.status(500).send("Internal server error");
+  }
 };
 
 const login = async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
+  if (!email || !password) {
     return res.status(400).send("Email and password required");
+  }
 
-  const user = await db("users").where({ email }).first();
+  // Find the user by their unique email
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  // Check if user exists and if the password is correct
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).send("Invalid credentials");
   }
 
+  // Generate tokens, save refresh token, and set cookies
   const { accessToken, refreshToken, refreshTokenJti } =
     authService.generateTokens(user);
   await authService.saveRefreshToken(refreshTokenJti, user.id);
@@ -56,8 +81,9 @@ const login = async (req, res) => {
 
 const refresh = async (req, res) => {
   const incomingRefreshToken = req.cookies.refreshToken;
-  if (!incomingRefreshToken)
+  if (!incomingRefreshToken) {
     return res.status(401).send("Refresh token not found");
+  }
 
   try {
     const decoded = authService.verifyRefreshToken(incomingRefreshToken);
@@ -69,18 +95,25 @@ const refresh = async (req, res) => {
     }
 
     await authService.deleteRefreshToken(decoded.jti);
-
-    const user = { id: decoded.sub };
     const { accessToken, refreshToken, refreshTokenJti } =
-      authService.generateTokens(user);
-    await authService.saveRefreshToken(refreshTokenJti, user.id);
+      authService.generateTokens({ id: decoded.sub });
+    await authService.saveRefreshToken(refreshTokenJti, decoded.sub);
 
     res.cookie("accessToken", accessToken, authService.accessCookieOptions);
     res.cookie("refreshToken", refreshToken, authService.refreshCookieOptions);
-    const userData = await db("users").where({ id: decoded.sub }).first();
-    // Send back the new access token in the body for RTK Query to use immediately
-    res.json({ accessToken, user: { email: userData.email, id: userData.id } });
+
+    const userData = await prisma.user.findUnique({
+      where: { id: decoded.sub },
+      select: { id: true, email: true },
+    });
+
+    if (!userData) {
+      return res.status(401).send("User not found for this token");
+    }
+
+    res.json({ accessToken, user: userData });
   } catch (err) {
+    console.error("Refresh error:", err);
     return res.status(401).send("Unauthorized: Invalid refresh token");
   }
 };
@@ -91,13 +124,16 @@ const logout = async (req, res) => {
     try {
       const decoded = authService.verifyRefreshToken(refreshToken);
       await authService.deleteRefreshToken(decoded.jti);
-    } catch (error) {}
+    } catch (error) {
+      // Ignore errors.
+    }
   }
   res.clearCookie("accessToken");
   res.clearCookie("refreshToken");
   res.status(204).send();
 };
 
+// Export all functions using module.exports for CommonJS
 module.exports = {
   login,
   signup,

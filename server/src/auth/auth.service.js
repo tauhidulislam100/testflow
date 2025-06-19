@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { randomUUID } = require("crypto");
-const db = require("../db.js");
+const prisma = require("../lib/prisma.js"); // Use the Prisma client
 
 const {
   ACCESS_TOKEN_SECRET,
@@ -15,6 +15,7 @@ const cookieOptions = {
   sameSite: "lax",
 };
 
+// This function has no database logic and remains unchanged.
 const generateTokens = (user) => {
   const accessToken = jwt.sign({ sub: user.id }, ACCESS_TOKEN_SECRET, {
     expiresIn: ACCESS_TOKEN_EXPIRATION,
@@ -28,29 +29,47 @@ const generateTokens = (user) => {
   return { accessToken, refreshToken, refreshTokenJti };
 };
 
+// Replaces Knex 'insert' with Prisma 'create'
 const saveRefreshToken = async (jti, userId) => {
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-  await db("refresh_tokens").insert({
-    jti,
-    user_id: userId,
-    expires_at: expiresAt,
+  const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  await prisma.refreshToken.create({
+    data: {
+      jti,
+      userId, // Prisma uses camelCase for relation scalar fields by convention
+      expires_at,
+    },
   });
 };
 
-const findRefreshToken = (jti) => db("refresh_tokens").where({ jti }).first();
+// Replaces Knex 'where().first()' with Prisma 'findUnique'
+const findRefreshToken = (jti) => {
+  return prisma.refreshToken.findUnique({
+    where: { jti },
+  });
+};
 
-const deleteRefreshToken = (jti) => db("refresh_tokens").where({ jti }).del();
+// Replaces Knex 'del()' with Prisma 'delete'
+const deleteRefreshToken = (jti) => {
+  return prisma.refreshToken.delete({
+    where: { jti },
+  });
+};
 
-const deleteAllUserTokens = (userId) =>
-  db("refresh_tokens").where({ user_id: userId }).del();
+// Replaces Knex 'del()' with Prisma 'deleteMany' for bulk operations
+const deleteAllUserTokens = (userId) => {
+  return prisma.refreshToken.deleteMany({
+    where: { userId },
+  });
+};
 
+// This function has no database logic and remains unchanged.
 const verifyRefreshToken = (token) => jwt.verify(token, REFRESH_TOKEN_SECRET);
 
 const accessCookieOptions = { ...cookieOptions, maxAge: 30 * 60 * 1000 }; // 30 minutes
 const refreshCookieOptions = {
   ...cookieOptions,
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-}; // 7 days
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
 
 module.exports = {
   generateTokens,
