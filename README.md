@@ -13,7 +13,7 @@ This project is fully containerized, ensuring a consistent and simple setup proc
 - Docker
 - Docker Compose
 
-if you don't want to use docker then it's fine just follow the same steps for copying env files then go to server run `npm install` then `npm run db:migrate` then `npm run dev`
+if you don't want to use docker then it's fine just follow the same steps for copying env files then go to server run `npm install` then `npm run prisma:generate` `npm run prisma:migrate` then `npm run dev`
 for web `cd web` `npm install` `npm run dev`
 
 ### Step 1: Clone the Repository
